@@ -1,0 +1,23 @@
+{
+  "niche": "Homepage Schema / Technical SEO",
+  "topics": [
+    {
+      "name": "Homepage Schema",
+      "keywords": ["homepage schema", "homepage schema markup", "homepage schema types", "homepage SEO"],
+      "notes": "Core niche topic. Focus on educational pins explaining different schema types for homepages.",
+      "priority": "High"
+    },
+    {
+      "name": "JSON-LD vs Microdata",
+      "keywords": ["JSON-LD", "microdata", "structured data formats", "schema markup comparison"],
+      "notes": "Comparison content works well. Carousel/comparison image types.",
+      "priority": "Medium"
+    },
+    {
+      "name": "Rich Results",
+      "keywords": ["rich results", "rich snippets", "Google rich results", "featured snippets"],
+      "notes": "Emphasize visual benefits of rich results in infographics.",
+      "priority": "Medium"
+    }
+  ]
+}
