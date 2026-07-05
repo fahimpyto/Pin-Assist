@@ -140,14 +140,25 @@ with tab1:
         if csv_source is not selected_file:
             csv_source.seek(0)
 
+        st.session_state["analytics_loaded"] = True
+        st.session_state["top_board_names"] = [b["Board"] for b in top_boards_data]
+        st.session_state["impressions_data_raw"] = impressions_data
+        st.session_state["top_boards_data_raw"] = top_boards_data
+
         if impressions_data:
             df_imp = pd.DataFrame(impressions_data)
             df_imp["Date"] = pd.to_datetime(df_imp["Date"])
+            df_imp["Weekday"] = df_imp["Date"].dt.day_name()
+            df_imp["MA7"] = df_imp["Impressions"].rolling(7).mean()
 
             total_impressions = df_imp["Impressions"].sum()
             avg_daily = df_imp["Impressions"].mean()
             best_day = df_imp.loc[df_imp["Impressions"].idxmax()]
             best_day_str = f"{best_day['Date'].strftime('%b %d')} ({best_day['Impressions']})"
+
+            last_7 = df_imp.tail(7)["Impressions"].sum()
+            prev_7 = df_imp.iloc[-14:-7]["Impressions"].sum() if len(df_imp) >= 14 else 0
+            wow_growth = ((last_7 - prev_7) / prev_7 * 100) if prev_7 > 0 else 0
 
             st.subheader("Summary")
             m1, m2, m3, m4 = st.columns(4)
@@ -156,38 +167,117 @@ with tab1:
             m3.metric("Date Range", f"{df_imp['Date'].min().strftime('%b %d')} - {df_imp['Date'].max().strftime('%b %d')}")
             m4.metric("Best Day", best_day_str)
 
-            fig = px.line(df_imp, x="Date", y="Impressions",
-                          title="Impressions Over Time",
-                          markers=True)
-            fig.update_layout(height=400)
+            st.subheader("Trend Indicators")
+            t1, t2, t3, t4 = st.columns(4)
+            t1.metric("Last 7 Days", f"{last_7:,}")
+            t2.metric("Prev 7 Days", f"{prev_7:,}")
+            t3.metric("WoW Growth", f"{wow_growth:+.1f}%")
+            trend_label = "Rising" if wow_growth > 5 else ("Declining" if wow_growth < -5 else "Stable")
+            t4.metric("Trend", trend_label)
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_imp["Date"], y=df_imp["Impressions"],
+                mode="lines+markers", name="Daily",
+                line=dict(color="#636efa")
+            ))
+            fig.add_trace(go.Scatter(
+                x=df_imp["Date"], y=df_imp["MA7"],
+                mode="lines", name="7-Day Avg",
+                line=dict(color="#ef553b", width=2, dash="dash")
+            ))
+            x_num = (df_imp["Date"] - df_imp["Date"].min()).dt.days
+            import numpy as np
+            coeffs = np.polyfit(x_num, df_imp["Impressions"], 1)
+            trendline = coeffs[0] * x_num + coeffs[1]
+            fig.add_trace(go.Scatter(
+                x=df_imp["Date"], y=trendline,
+                mode="lines", name="Trend Line",
+                line=dict(color="#00cc96", width=1, dash="dot")
+            ))
+            fig.update_layout(title="Impressions Over Time", height=400)
             st.plotly_chart(fig, width="stretch")
 
+            st.subheader("Day-of-Week Analysis")
+            dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            dow_avg = df_imp.groupby("Weekday")["Impressions"].mean().reindex(dow_order).reset_index()
+            best_dow = dow_avg.loc[dow_avg["Impressions"].idxmax()]
+            worst_dow = dow_avg.loc[dow_avg["Impressions"].idxmin()]
+
+            col_dow1, col_dow2, col_dow3 = st.columns([1, 2, 1])
+            with col_dow1:
+                st.metric("Best Day", best_dow["Weekday"], f"{best_dow['Impressions']:.0f}/day")
+            with col_dow3:
+                st.metric("Worst Day", worst_dow["Weekday"], f"{worst_dow['Impressions']:.0f}/day")
+            with col_dow2:
+                fig_dow = px.bar(dow_avg, x="Weekday", y="Impressions",
+                                 title="Avg Impressions by Day of Week",
+                                 color="Impressions", color_continuous_scale="blues")
+                fig_dow.update_layout(height=300, showlegend=False)
+                st.plotly_chart(fig_dow, width="stretch")
+
         if top_boards_data:
-            st.subheader("Top Boards")
             df_boards = pd.DataFrame(top_boards_data)
-            fig = px.bar(df_boards, x="Board", y=["Impressions", "Pin Clicks", "Saves"],
-                         title="Board Performance",
-                         barmode="group")
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, width="stretch")
+            total_saves = df_boards["Saves"].sum()
+            total_pin_clicks = df_boards["Pin Clicks"].sum()
+            total_outbound = df_boards["Outbound Clicks"].sum()
+            total_engagement = df_boards["Engagement"].sum()
+            total_imp_board = df_boards["Impressions"].sum()
+            engagement_rate = (total_engagement / total_imp_board * 100) if total_imp_board > 0 else 0
+
+            st.subheader("Engagement Metrics")
+            e1, e2, e3, e4 = st.columns(4)
+            e1.metric("Total Saves", f"{total_saves:,}")
+            e2.metric("Total Pin Clicks", f"{total_pin_clicks:,}")
+            e3.metric("Total Outbound Clicks", f"{total_outbound:,}")
+            e4.metric("Engagement Rate", f"{engagement_rate:.1f}%")
+
+            st.subheader("Top Boards")
+            fig_boards = px.bar(df_boards, x="Board",
+                                y=["Impressions", "Pin Clicks", "Saves", "Outbound Clicks"],
+                                title="Board Performance (All Metrics)",
+                                barmode="group")
+            fig_boards.update_layout(height=400)
+            st.plotly_chart(fig_boards, width="stretch")
 
             with st.expander("View Board Data Table"):
                 st.dataframe(df_boards, width="stretch", hide_index=True)
 
         if top_pins_data:
-            st.subheader("Top Pins")
             df_pins = pd.DataFrame(top_pins_data)
             df_pins["Pin ID"] = df_pins["Pin URL"].str.extract(r"(\d+)$")
             df_pins_display = df_pins[["Pin ID", "Content Type", "Source", "Impressions"]]
 
+            st.subheader("Top Pins")
             num_pins = st.slider("Number of top pins to show", 5, min(50, len(df_pins_display)), 10)
             st.dataframe(df_pins_display.head(num_pins), width="stretch", hide_index=True)
 
-            fig = px.bar(df_pins.head(num_pins), x="Pin ID", y="Impressions",
-                         title=f"Top {num_pins} Pins by Impressions",
-                         color="Content Type")
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, width="stretch")
+            fig_pins = px.bar(df_pins.head(num_pins), x="Pin ID", y="Impressions",
+                              title=f"Top {num_pins} Pins by Impressions",
+                              color="Content Type")
+            fig_pins.update_layout(height=400)
+            st.plotly_chart(fig_pins, width="stretch")
+
+        if impressions_data or top_boards_data or top_pins_data:
+            st.subheader("Content Type Insights")
+            df_plan_insight = load_pin_plan()
+            if not df_plan_insight.empty:
+                type_counts = df_plan_insight["Image Type"].value_counts().reset_index()
+                type_counts.columns = ["Image Type", "Count"]
+                type_done = df_plan_insight[df_plan_insight["Status"] == "Done"]["Image Type"].value_counts().reset_index()
+                type_done.columns = ["Image Type", "Done"]
+                type_data = type_counts.merge(type_done, on="Image Type", how="left").fillna(0)
+                type_data["Done"] = type_data["Done"].astype(int)
+                type_data["Remaining"] = type_data["Count"] - type_data["Done"]
+
+                fig_type = px.bar(type_data, x="Image Type", y=["Done", "Remaining"],
+                                  title="Pin Plan: Image Type Distribution",
+                                  barmode="stack",
+                                  color_discrete_map={"Done": "#00cc96", "Remaining": "#636efa"})
+                fig_type.update_layout(height=350)
+                st.plotly_chart(fig_type, width="stretch")
+            else:
+                st.info("Add entries to pin_plan.csv to see content type insights.")
     else:
         st.info("Upload a Pinterest analytics CSV or select one from the data/ folder to view insights.")
 
@@ -336,6 +426,74 @@ with tab3:
 with tab4:
     st.header("Pin Ideas Generator")
     st.markdown("Generate pin topic + image type ideas based on your niche.")
+
+    analytics_loaded = st.session_state.get("analytics_loaded", False)
+
+    if analytics_loaded:
+        board_names = st.session_state.get("top_board_names", [])
+        if board_names:
+            df_plan_smart = load_pin_plan()
+            existing_topics_lower = set(t.lower() for t in df_plan_smart["Topic"].tolist()) if not df_plan_smart.empty else set()
+
+            with st.expander("Smart Suggestions (Based on Analytics)", expanded=True):
+                st.markdown("**Your top boards:** " + ", ".join(board_names[:5]))
+
+                suggestion_sources = []
+                for name in board_names:
+                    clean = name.replace("-", " ").replace("  ", " ").strip()
+                    for variant in [
+                        f"Ultimate Guide to {clean}",
+                        f"{clean} Checklist",
+                        f"{clean} Explained",
+                        f"Top {clean} Tips",
+                        f"{clean} for Beginners",
+                        f"Advanced {clean} Strategy",
+                        f"{clean} Mistakes to Avoid",
+                        f"{clean}: Complete Overview",
+                        f"How to Master {clean}",
+                        f"{clean} Best Practices",
+                    ]:
+                        if variant.lower() not in existing_topics_lower:
+                            suggestion_sources.append(variant)
+
+                if suggestion_sources:
+                    smart_count = min(8, len(suggestion_sources))
+                    selected_variants = suggestion_sources[:smart_count]
+                    for s in selected_variants:
+                        st.markdown(f"- {s}")
+
+                    if st.button("Add These Smart Suggestions to Pin Plan"):
+                        df_current = load_pin_plan()
+                        next_pin_num = df_current["Pin"].max() + 1 if not df_current.empty else 1
+                        import random
+                        img_pool = ["Infographic", "Checklist", "How-To Guide", "Step-by-Step Guide",
+                                    "Visual Explanation", "Comparison Chart", "Listicle", "Carousel style"]
+                        new_rows = []
+                        for s in selected_variants:
+                            new_rows.append({
+                                "Pin": next_pin_num,
+                                "Topic": s,
+                                "Image Type": random.choice(img_pool),
+                                "Status": "Pending"
+                            })
+                            next_pin_num += 1
+                        df_new = pd.concat([df_current, pd.DataFrame(new_rows)], ignore_index=True)
+                        save_pin_plan(df_new)
+                        st.success(f"{len(new_rows)} smart suggestions added to pin_plan.csv!")
+                        st.rerun()
+
+                board_terms = set()
+                for name in board_names:
+                    for term in name.replace("-", " ").split():
+                        t = term.strip().lower()
+                        if len(t) > 3:
+                            board_terms.add(t)
+                pin_plan_text = " ".join(df_plan_smart["Topic"].tolist()).lower() if not df_plan_smart.empty else ""
+                missing_terms = sorted([t for t in board_terms if t not in pin_plan_text])
+                if missing_terms:
+                    st.warning(f"**Gap:** Your pin plan is missing content about: {', '.join(missing_terms)}")
+
+            st.markdown("---")
 
     IMAGE_TYPES = [
         "Infographic", "Illustration", "Visual Explanation", "Flowchart",
